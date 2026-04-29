@@ -1,0 +1,120 @@
+name: Release
+
+# Trigger on semver-style git tags, e.g. v0.0.1, v1.2.3, v1.2.3-rc1.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: macos-arm64
+            rmapi: bin/rmapi-darwin-arm64
+          - os: ubuntu-22.04
+            target: linux-x86_64
+            rmapi: bin/rmapi-linux-arm64 # repo only ships arm64; bundle as-is
+          - os: ubuntu-22.04-arm
+            target: linux-arm64
+            rmapi: bin/rmapi-linux-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 \
+            libffi-dev shared-mime-info
+
+      - name: Install system deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cairo pango gdk-pixbuf libffi
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Derive version
+        id: ver
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          echo "tag=$tag"         >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build binary with PyInstaller
+        shell: bash
+        run: |
+          pyinstaller \
+            --onefile \
+            --name rm2md \
+            --paths src \
+            --add-binary "${{ matrix.rmapi }}:bin" \
+            --collect-all cairosvg \
+            --collect-all rmc \
+            --collect-all mistralai \
+            src/rm2md/__main__.py
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          mkdir -p release
+          asset="rm2md-${{ steps.ver.outputs.version }}-${{ matrix.target }}.tar.gz"
+          tar -C dist -czf "release/$asset" rm2md
+          ( cd release && shasum -a 256 "$asset" > "$asset.sha256" )
+          ls -la release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rm2md-${{ matrix.target }}
+          path: release/*
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.sha256' \) \
+            -exec cp {} release/ \;
+          ls -la release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: release/*
