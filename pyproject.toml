@@ -3,18 +3,22 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mistral-ocr-cli"
-version = "0.1.0"
-description = "CLI to convert PDFs to Markdown using the Mistral OCR API."
+name = "rm2md"
+version = "0.2.0"
+description = "Download reMarkable notebooks and convert them to Markdown via Mistral OCR."
 requires-python = ">=3.9"
 dependencies = [
     "mistralai>=1.5.0",
     "python-dotenv>=1.0.0",
     "datauri>=1.0.0",
+    "questionary>=2.0.0",
+    "rmc>=0.3.0",
+    "pypdf>=4.0.0",
+    "cairosvg>=2.7.0",
 ]
 
 [project.scripts]
-ocr = "mistral_ocr.cli:main"
+rm2md = "rm2md.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
