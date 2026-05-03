@@ -22,17 +22,56 @@ pip install -e .
 
 # Mistral API key (https://console.mistral.ai/api-keys)
 export MISTRAL_API_KEY=...        # or put it in a .env file
-
-# One-time reMarkable cloud auth (opens a device-code prompt)
-./bin/rmapi-darwin-arm64          # or bin/rmapi-linux-arm64 on Linux
 ```
 
-The bundled `rmapi` binary is picked up automatically; nothing else to
-configure.
+The bundled `rmapi` binary (under `bin/`) is picked up automatically based
+on your platform; nothing else to configure.
+
+## Getting started
+
+1. **Pair this machine with the reMarkable cloud** (one-time):
+
+   ```bash
+   rm2md login
+   ```
+
+   `rmapi` prints a URL
+   ([my.remarkable.com/device/desktop/connect](https://my.remarkable.com/device/desktop/connect))
+   and waits for the 8-character one-time code shown there. Paste it into
+   the prompt; the token is stored in `~/.config/rmapi/rmapi.conf` so you
+   only need to do this once per machine.
+
+2. **Find the document you want** by browsing your cloud:
+
+   ```bash
+   rm2md ls
+   rm2md ls /Notes
+   ```
+
+3. **Pull it as Markdown**:
+
+   ```bash
+   rm2md pull "/Notes/Meeting 2026-04-29"
+   ```
+
+   The result lands in `./output/YYYY-MM-DD-HHMM-<slug>.md` (plus an
+   `_images/` folder if the document contains images).
+
+Prefer a guided flow? Run `rm2md wizard` to browse, pick a document, and
+choose options interactively.
 
 ## Usage
 
-The CLI entry point is `rm2md` with four subcommands.
+The CLI entry point is `rm2md` with the following subcommands.
+
+### `rm2md login`
+
+Pair this machine with the reMarkable cloud via `rmapi`'s interactive
+one-time-code flow. Run this once before using `ls`, `pull`, or `wizard`.
+
+```bash
+rm2md login
+```
 
 ### `rm2md wizard`
 
@@ -56,7 +95,7 @@ rm2md ls /Notes
 ### `rm2md pull REMOTE_PATH`
 
 Download → convert → OCR in one shot. Output goes to `./output/` as
-`YYYY-MM-DD-<slug>.md` (plus an images folder if the document contains
+`YYYY-MM-DD-HHMM-<slug>.md` (plus an images folder if the document contains
 images).
 
 ```bash
@@ -87,9 +126,57 @@ Supports the same `--no-images`, `--model`, and `--pages` options as `pull`.
 
 ```
 output/
-  2026-04-29-meeting.md
-  2026-04-29-meeting_images/      # only if the document contains images
+  2026-04-29-1430-meeting.md
+  2026-04-29-1430-meeting_images/   # only if the document contains images
 input/
   .rm2md-work/
-    2026-04-29-meeting/           # downloaded archive + rendered PDF
+    2026-04-29-meeting/             # downloaded archive + rendered PDF
 ```
+
+## Agent skill (Claude Code / Copilot)
+
+This repo ships a packaged
+[Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills) at
+[.github/skills/remarkable-to-markdown/SKILL.md](.github/skills/remarkable-to-markdown/SKILL.md).
+It teaches an AI agent the full 4-stage workflow built on top of this CLI:
+
+0. Browse the reMarkable cloud with `rm2md ls` to find the document.
+1. Run `rm2md pull` to download → render → OCR.
+2. View each extracted image and replace its Markdown reference with a
+   text description (so the result is consumable as raw text).
+3. Post-process the OCR output to fix typos / OCR misreads while preserving
+   the original language, structure, line breaks, and special glyphs
+   (`☐`, `→`, …).
+
+### When to use it
+
+Trigger the skill whenever you want a handwritten reMarkable note turned
+into clean LLM-ready Markdown — not just the raw OCR. Typical prompts that
+activate it:
+
+- "pull `<note name>` from remarkable"
+- "remarkable to markdown"
+- "rm2md `<path>`"
+- German equivalents like "Notiz vom reMarkable holen" or "handschriftliche
+  Notiz in Markdown".
+
+Skip the skill (just call `rm2md` directly) when you only need the raw OCR
+output and don't want image descriptions or correction passes.
+
+### How to use it
+
+- **Claude Code:** the skill is auto-discovered from `.github/skills/`.
+  Just describe what you want in natural language ("pull
+  /Psychotherapie/Sitzung 12 from remarkable") and Claude will load the
+  skill and run the pipeline.
+- **GitHub Copilot / other agents:** point the agent at
+  [.github/skills/remarkable-to-markdown/SKILL.md](.github/skills/remarkable-to-markdown/SKILL.md)
+  and ask it to follow the workflow there.
+
+Prerequisites the skill assumes are already done by you:
+
+- `rm2md login` has been run once on this machine.
+- `MISTRAL_API_KEY` is set (in the environment or a `.env` file).
+- The project venv exists at `.venv/` (the skill activates it itself; it
+  will **not** call `rm2md wizard`, since the wizard is interactive and
+  would hang the agent).

@@ -127,3 +127,17 @@ def geta(remote_path: str, dest_dir: Path) -> Path:
         f"rmapi geta {remote_path!r} produced no output file in {dest_dir} "
         f"(exit {result.returncode}). stderr: {result.stderr.strip()}"
     )
+
+
+def login() -> int:
+    """Run ``rmapi`` interactively to register this client with the cloud.
+
+    Invoking ``rmapi`` with no arguments triggers its pairing flow when no
+    token is stored yet (prompts for a one-time code from
+    https://my.remarkable.com/device/desktop/connect). We exec it with the
+    current TTY attached so the user can type the code and see prompts.
+    Returns the rmapi exit code.
+    """
+    binary = _resolve_rmapi_binary()
+    # No capture: inherit stdin/stdout/stderr so the prompt works.
+    return subprocess.call([str(binary)])

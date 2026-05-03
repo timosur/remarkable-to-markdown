@@ -24,6 +24,17 @@ def _slugify(name: str) -> str:
     return s.strip("-") or "document"
 
 
+# ---------- subcommand: login ----------
+
+def cmd_login(_args: argparse.Namespace) -> int:
+    """Pair this machine with the reMarkable cloud via rmapi's interactive flow."""
+    try:
+        return rmapi.login()
+    except rmapi.RmapiError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
 # ---------- subcommand: ls ----------
 
 def cmd_ls(args: argparse.Namespace) -> int:
@@ -169,6 +180,13 @@ def build_parser() -> argparse.ArgumentParser:
         description="reMarkable -> Markdown via Mistral OCR.",
     )
     sub = p.add_subparsers(dest="command", required=True)
+
+    # login
+    p_login = sub.add_parser(
+        "login",
+        help="Pair this machine with the reMarkable cloud (interactive one-time code).",
+    )
+    p_login.set_defaults(func=cmd_login)
 
     # ls
     p_ls = sub.add_parser("ls", help="List a folder on the reMarkable cloud.")
