@@ -13,6 +13,7 @@ import zipfile
 from pathlib import Path
 from typing import List, Optional
 
+from . import _patches  # noqa: F401  (side effect: patches rmc)
 import rmc
 import cairosvg
 from pypdf import PdfReader, PdfWriter

@@ -5,7 +5,7 @@ import argparse
 import re
 import shutil
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from . import convert, ocr, rmapi, wizard
@@ -39,6 +39,41 @@ def cmd_ls(args: argparse.Namespace) -> int:
     return 0
 
 
+def _find_existing_archive(work_dir: Path) -> Path | None:
+    """Return a previously downloaded reMarkable archive in ``work_dir``, if any."""
+    if not work_dir.is_dir():
+        return None
+    for pattern in ("*.zip", "*.rmdoc"):
+        for candidate in sorted(work_dir.glob(pattern)):
+            if candidate.is_file() and candidate.stat().st_size > 0:
+                return candidate
+    return None
+
+
+def _find_existing_pdf(work_dir: Path) -> Path | None:
+    """Return a previously produced PDF in ``work_dir``, if any.
+
+    Looks for an embedded passthrough PDF in ``extracted/`` and for merged
+    notebook PDFs in ``pdf/``. Picks the largest hit so a fully merged file
+    wins over per-page intermediates.
+    """
+    if not work_dir.is_dir():
+        return None
+    candidates: list[Path] = []
+    extracted = work_dir / "extracted"
+    if extracted.is_dir():
+        candidates.extend(p for p in extracted.rglob("*.pdf") if p.is_file())
+    pdf_dir = work_dir / "pdf"
+    if pdf_dir.is_dir():
+        # Skip per-page intermediates (pages-*/0001.pdf etc.); keep merged ones.
+        for p in pdf_dir.glob("*.pdf"):
+            if p.is_file() and p.stat().st_size > 0:
+                candidates.append(p)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_size)
+
+
 # ---------- subcommand: pull ----------
 
 def cmd_pull(args: argparse.Namespace) -> int:
@@ -47,31 +82,38 @@ def cmd_pull(args: argparse.Namespace) -> int:
 
     basename = Path(args.remote_path).name or "document"
     slug = _slugify(basename)
-    md_name = f"{date.today().isoformat()}-{slug}.md"
+    now = datetime.now()
+    md_name = f"{now.strftime('%Y-%m-%d-%H%M')}-{slug}.md"
     md_path = out_dir / md_name
 
     work_dir = _WORK_ROOT / f"{date.today().isoformat()}-{slug}"
-    if work_dir.exists():
-        shutil.rmtree(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
     print(f"Work dir: {work_dir}", file=sys.stderr)
     try:
-        print(f"Downloading {args.remote_path!r} ...", file=sys.stderr)
-        try:
-            archive = rmapi.geta(args.remote_path, work_dir)
-        except rmapi.RmapiError as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 1
+        archive = _find_existing_archive(work_dir)
+        if archive is not None:
+            print(f"Reusing downloaded archive: {archive.name}", file=sys.stderr)
+        else:
+            print(f"Downloading {args.remote_path!r} ...", file=sys.stderr)
+            try:
+                archive = rmapi.geta(args.remote_path, work_dir)
+            except rmapi.RmapiError as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 1
 
-        print(f"Converting {archive.name} -> PDF ...", file=sys.stderr)
-        try:
-            pdf = convert.to_pdf(archive, work_dir)
-        except convert.ConvertError as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 1
+        pdf = _find_existing_pdf(work_dir)
+        if pdf is not None:
+            print(f"Reusing converted PDF: {pdf.relative_to(work_dir)}", file=sys.stderr)
+        else:
+            print(f"Converting {archive.name} -> PDF ...", file=sys.stderr)
+            try:
+                pdf = convert.to_pdf(archive, work_dir)
+            except convert.ConvertError as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 1
 
         if args.keep_pdf:
-            kept = out_dir / f"{date.today().isoformat()}-{slug}.pdf"
+            kept = out_dir / f"{now.strftime('%Y-%m-%d-%H%M')}-{slug}.pdf"
             shutil.copy2(pdf, kept)
             print(f"Kept PDF: {kept}", file=sys.stderr)
 
