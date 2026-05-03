@@ -50,8 +50,22 @@ def write_markdown(ocr_response, output_path: Path, images_dir: Path | None) -> 
 
 
 def get_api_key() -> str | None:
-    """Load .env and return MISTRAL_API_KEY (or None)."""
-    load_dotenv()
+    """Return ``MISTRAL_API_KEY``, loading ``.env`` and the central config.
+
+    Lookup order (first hit wins):
+
+    1. Existing process environment.
+    2. ``./.env`` in the current working directory (developer flow).
+    3. ``$XDG_CONFIG_HOME/rm2md/config`` (default: ``~/.config/rm2md/config``)
+       — used by central installs done via ``install.sh``.
+    """
+    load_dotenv()  # local .env (no-op if missing); does not override env vars
+    if not os.environ.get("MISTRAL_API_KEY"):
+        xdg = os.environ.get("XDG_CONFIG_HOME")
+        config_home = Path(xdg) if xdg else Path.home() / ".config"
+        central = config_home / "rm2md" / "config"
+        if central.is_file():
+            load_dotenv(central, override=False)
     return os.environ.get("MISTRAL_API_KEY")
 
 

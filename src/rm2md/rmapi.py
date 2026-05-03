@@ -1,6 +1,7 @@
 """Thin subprocess wrapper around the vendored `rmapi` binary."""
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 import subprocess
@@ -30,28 +31,53 @@ class RemoteEntry:
 
 
 def _resolve_rmapi_binary() -> Path:
-    """Pick the vendored binary for the current platform, else fall back to PATH."""
+    """Pick the vendored binary for the current platform, else fall back to PATH.
+
+    Lookup order:
+
+    1. ``$RM2MD_BIN_DIR`` if set (escape hatch for packagers).
+    2. The repo's ``bin/`` directory (developer / editable install).
+    3. ``$XDG_DATA_HOME/rm2md/bin`` (default: ``~/.local/share/rm2md/bin``)
+       — populated by ``install.sh`` for central installs where the
+       package lives in site-packages and the repo root is unavailable.
+    4. ``rmapi`` on ``$PATH``.
+    """
     system = platform.system().lower()
     machine = platform.machine().lower()
 
     if system == "darwin" and ("arm" in machine or machine == "aarch64"):
-        candidate = _BIN_DIR / "rmapi-darwin-arm64"
+        bin_name = "rmapi-darwin-arm64"
     elif system == "linux":
-        candidate = _BIN_DIR / "rmapi-linux-arm64"
+        bin_name = "rmapi-linux-arm64"
     else:
-        candidate = None
+        bin_name = None
 
-    if candidate and candidate.exists():
-        candidate.chmod(0o755)
-        return candidate
+    search_dirs: List[Path] = []
+    env_dir = os.environ.get("RM2MD_BIN_DIR")
+    if env_dir:
+        search_dirs.append(Path(env_dir))
+    search_dirs.append(_BIN_DIR)
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    data_home = Path(xdg_data) if xdg_data else Path.home() / ".local" / "share"
+    search_dirs.append(data_home / "rm2md" / "bin")
+
+    if bin_name is not None:
+        for d in search_dirs:
+            candidate = d / bin_name
+            if candidate.exists():
+                try:
+                    candidate.chmod(0o755)
+                except OSError:
+                    pass
+                return candidate
 
     on_path = shutil.which("rmapi")
     if on_path:
         return Path(on_path)
 
     raise RmapiError(
-        "No rmapi binary found. Expected vendored binary in "
-        f"{_BIN_DIR} or `rmapi` on PATH."
+        "No rmapi binary found. Expected vendored binary in one of "
+        f"{[str(d) for d in search_dirs]} or `rmapi` on PATH."
     )
 
 

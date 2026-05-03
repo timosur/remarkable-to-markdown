@@ -15,21 +15,59 @@ The pipeline is:
 
 ## Setup
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+One-line install — no clone required:
 
-# Mistral API key (https://console.mistral.ai/api-keys)
-export MISTRAL_API_KEY=...        # or put it in a .env file
+```bash
+curl -fsSL https://raw.githubusercontent.com/timosur/remarkable-to-markdown/main/install.sh | bash
 ```
 
-The bundled `rmapi` binary (under `bin/`) is picked up automatically based
-on your platform; nothing else to configure.
+This installs `rm2md` user-wide so you can run it from any directory — no
+venv to activate, no checkout to keep around. It will:
+
+- install the package via [`pipx`](https://pipx.pypa.io) when available, or
+  fall back to a managed virtualenv at `~/.local/share/rm2md/venv/` with a
+  symlink at `~/.local/bin/rm2md`,
+- download the bundled `rmapi` binary into `~/.local/share/rm2md/bin/`,
+- create a central config file at `~/.config/rm2md/config` (key=value, same
+  format as `.env`) — edit it once and set `MISTRAL_API_KEY`.
+
+Re-running the installer upgrades the existing install in place. Pin a
+specific ref with `RM2MD_REF=v0.0.2 curl ... | bash`. Override the Python
+interpreter with `PYTHON=/path/to/python3.11 curl ... | bash` (Python 3.10+
+required).
+
+System dependencies: `libcairo` (`brew install cairo` on macOS,
+`apt install libcairo2` on Linux), `git`, and `curl`.
+
+### Configuration lookup order
+
+`rm2md` resolves `MISTRAL_API_KEY` in this order (first hit wins):
+
+1. The process environment.
+2. `./.env` in the current working directory (handy for project-scoped
+   keys).
+3. `~/.config/rm2md/config` (or `$XDG_CONFIG_HOME/rm2md/config`) — the
+   central config written by the installer.
+
+The bundled `rmapi` binary is found via the same kind of cascade: an
+`$RM2MD_BIN_DIR` override, then the repo's `bin/` (when running from a
+checkout), then `~/.local/share/rm2md/bin/`, then `rmapi` on `$PATH`.
 
 ## Getting started
 
-1. **Pair this machine with the reMarkable cloud** (one-time):
+1. **Install**:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/timosur/remarkable-to-markdown/main/install.sh | bash
+   ```
+
+   Then put your Mistral API key into the central config:
+
+   ```bash
+   $EDITOR ~/.config/rm2md/config
+   ```
+
+2. **Pair this machine with the reMarkable cloud** (one-time):
 
    ```bash
    rm2md login
@@ -41,14 +79,14 @@ on your platform; nothing else to configure.
    the prompt; the token is stored in `~/.config/rmapi/rmapi.conf` so you
    only need to do this once per machine.
 
-2. **Find the document you want** by browsing your cloud:
+3. **Find the document you want** by browsing your cloud:
 
    ```bash
    rm2md ls
    rm2md ls /Notes
    ```
 
-3. **Pull it as Markdown**:
+4. **Pull it as Markdown**:
 
    ```bash
    rm2md pull "/Notes/Meeting 2026-04-29"
@@ -132,6 +170,89 @@ input/
   .rm2md-work/
     2026-04-29-meeting/             # downloaded archive + rendered PDF
 ```
+
+## Developer guide
+
+For hacking on `rm2md` itself — adding subcommands, fixing OCR
+post-processing, tweaking the `rmc` patches, etc.
+
+### Editable install
+
+```bash
+git clone https://github.com/timosur/remarkable-to-markdown.git
+cd remarkable-to-markdown
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e .
+```
+
+Python 3.10+ is required (`rmc` doesn't support 3.9). Make sure `libcairo`
+is installed system-wide (`brew install cairo` / `apt install libcairo2`),
+otherwise `cairosvg` will fail at runtime.
+
+Set up a project-scoped Mistral key in `.env` so it shadows the central
+config while you work:
+
+```bash
+echo 'MISTRAL_API_KEY=sk-...' > .env
+```
+
+`rm2md` reads `./.env` before the central `~/.config/rm2md/config`, so a
+checkout-local key always wins.
+
+### Repo layout
+
+```
+src/rm2md/
+  cli.py        # argparse entry point + subcommands
+  rmapi.py      # subprocess wrapper around the bundled rmapi binary
+  convert.py    # .rm / .rmdoc / pdf -> merged PDF (uses rmc + cairosvg)
+  ocr.py       # PDF -> Markdown via Mistral OCR
+  wizard.py    # interactive questionary flow
+  _patches.py  # runtime monkeypatches for upstream rmc / rmscene bugs
+bin/            # vendored rmapi binaries (darwin-arm64, linux-arm64)
+input/
+  .rm2md-work/  # per-run intermediate files (kept for inspection)
+output/         # final Markdown + extracted images
+.github/skills/remarkable-to-markdown/SKILL.md   # Claude Code skill
+install.sh      # central / curl-pipe installer
+```
+
+### Running from a checkout
+
+The editable install puts `rm2md` on the venv's PATH. From inside the
+activated venv just call it directly — it will pick up your local source
+on every invocation (no reinstall needed for source edits).
+
+`rmapi` resolution prefers the repo's `bin/` directory when running from a
+checkout, so dev runs stay isolated from any centrally-installed binary at
+`~/.local/share/rm2md/bin/`.
+
+### Patching upstream rendering bugs
+
+`rmc` and `rmscene` have rough edges that drop pages on real-world
+notebooks (e.g. the missing `PenColor.HIGHLIGHT` palette entry). Add new
+fixes to [src/rm2md/_patches.py](src/rm2md/_patches.py) as idempotent
+functions called from `apply_all()`. The module is imported once at the
+top of [src/rm2md/convert.py](src/rm2md/convert.py), so patches apply
+before any rendering happens.
+
+### Releasing
+
+1. Bump `version` in [pyproject.toml](pyproject.toml).
+2. Commit, tag (`git tag -a vX.Y.Z -m "vX.Y.Z"`), push (`git push --tags`).
+3. The `curl ... | bash` installer pulls `main` by default; users on a
+   pinned version can opt in with `RM2MD_REF=vX.Y.Z`.
+
+### Testing the installer locally
+
+```bash
+RM2MD_REF=$(git rev-parse HEAD) bash ./install.sh
+```
+
+This exercises the same code path as the curl one-liner but installs from
+your current commit.
 
 ## Agent skill (Claude Code / Copilot)
 
